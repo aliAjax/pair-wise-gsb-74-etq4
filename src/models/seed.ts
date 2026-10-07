@@ -1,5 +1,7 @@
 import type {
   AuditEvent,
+  CollectionChangeRecord,
+  CollectionMatrixCell,
   DownstreamDependency,
   EventDefinition,
   EventVersionSnapshot,
@@ -91,11 +93,11 @@ const events: EventDefinition[] = [
         id: 'rule-001',
         eventId: 'evt-001',
         platform: 'web',
-        enabled: true,
+        enabled: false,
         trigger: '订单创建接口成功返回后上报',
         owner: 'Web 客户端组',
         requiredPropertyIds: ['prop-001', 'prop-002', 'prop-003', 'prop-005'],
-        note: 'Web 端在支付弹窗打开前上报。',
+        note: 'Web 端支付弹窗改造，已停止采集，等待 2026.10.0 重新接入。',
       },
       {
         id: 'rule-002',
@@ -633,6 +635,7 @@ const dependencies: DownstreamDependency[] = [
       { eventId: 'evt-004', propertyId: 'prop-016' },
     ],
     status: 'active',
+    consumptionPlatforms: [],
   },
   {
     id: 'dep-002',
@@ -647,6 +650,7 @@ const dependencies: DownstreamDependency[] = [
       { eventId: 'evt-004', propertyId: 'prop-016' },
     ],
     status: 'active',
+    consumptionPlatforms: [],
   },
   {
     id: 'dep-003',
@@ -661,6 +665,7 @@ const dependencies: DownstreamDependency[] = [
       { eventId: 'evt-002', propertyId: 'prop-009' },
     ],
     status: 'active',
+    consumptionPlatforms: ['server'],
   },
   {
     id: 'dep-004',
@@ -677,6 +682,7 @@ const dependencies: DownstreamDependency[] = [
       { eventId: 'evt-003', propertyId: 'prop-024' },
     ],
     status: 'migration_required',
+    consumptionPlatforms: [],
   },
   {
     id: 'dep-005',
@@ -690,6 +696,7 @@ const dependencies: DownstreamDependency[] = [
       { eventId: 'evt-001', propertyId: 'prop-005' },
     ],
     status: 'migration_required',
+    consumptionPlatforms: ['ios', 'android'],
   },
   {
     id: 'dep-006',
@@ -704,6 +711,7 @@ const dependencies: DownstreamDependency[] = [
       { eventId: 'evt-006', propertyId: 'prop-023' },
     ],
     status: 'active',
+    consumptionPlatforms: ['server'],
   },
 ]
 
@@ -873,6 +881,45 @@ const releases: ReleaseCandidate[] = [
         comment: '',
       },
     ],
+    platformAcks: [
+      {
+        id: 'ack-001',
+        platform: 'web',
+        owner: 'Web 客户端组',
+        status: 'approved',
+        comment: 'Web 支付弹窗改造前的口径已确认。',
+        createdAt: '2026-09-26T11:00:00+08:00',
+        matrixRevision: 4,
+        invalidated: true,
+        invalidReason: 'Web 端订单提交已停采，该端确认与审批立即失效，需重新确认。',
+      },
+      {
+        id: 'ack-002',
+        platform: 'ios',
+        owner: 'iOS 客户端组',
+        status: 'approved',
+        comment: 'iOS 端继续采集，口径无变化。',
+        createdAt: '2026-09-27T10:20:00+08:00',
+        matrixRevision: 0,
+      },
+      {
+        id: 'ack-003',
+        platform: 'android',
+        owner: 'Android 客户端组',
+        status: 'confirmed',
+        comment: '离线补报口径已确认，待负责人审批。',
+        createdAt: '2026-09-27T10:40:00+08:00',
+        matrixRevision: 0,
+      },
+      {
+        id: 'ack-004',
+        platform: 'server',
+        owner: '交易服务组',
+        status: 'pending',
+        comment: '',
+        matrixRevision: 0,
+      },
+    ],
     createdAt: '2026-09-25T10:30:00+08:00',
   },
   {
@@ -937,6 +984,7 @@ const releases: ReleaseCandidate[] = [
         createdAt: '2026-08-30T11:50:00+08:00',
       },
     ],
+    platformAcks: [],
     createdAt: '2026-08-25T09:00:00+08:00',
     publishedAt: '2026-08-30T12:00:00+08:00',
   },
@@ -981,7 +1029,172 @@ const audit: AuditEvent[] = [
   },
 ]
 
-export const createSeedState = (): GovernanceState => ({
+interface SeedCell {
+  state: CollectionMatrixCell['state']
+  basis: string
+  effectiveAt: string
+  actor: string
+  revision: number
+  source: CollectionMatrixCell['source']
+}
+
+const cellOverrides: Record<string, SeedCell> = {
+  'evt-001:web': {
+    state: 'stopped',
+    basis: 'INCIDENT-WEB-3320：支付弹窗改造期间 Web 端重复上报，先停止采集，iOS/Server 继续，发布候选继续放行。',
+    effectiveAt: '2026-10-05T10:00:00+08:00',
+    actor: 'Web 客户端组',
+    revision: 5,
+    source: 'manual',
+  },
+  'evt-005:web': {
+    state: 'stopped',
+    basis: '历史活动页已下线，新版领券迁移至 coupon_apply_result，停止新数据采集。',
+    effectiveAt: '2026-09-15T00:00:00+08:00',
+    actor: '营销产品组',
+    revision: 1,
+    source: 'manual',
+  },
+  'evt-005:ios': {
+    state: 'stopped',
+    basis: '历史活动页已下线，新版领券迁移至 coupon_apply_result，停止新数据采集。',
+    effectiveAt: '2026-09-15T00:00:00+08:00',
+    actor: '营销产品组',
+    revision: 1,
+    source: 'manual',
+  },
+  'evt-005:android': {
+    state: 'stopped',
+    basis: '历史活动页已下线，新版领券迁移至 coupon_apply_result，停止新数据采集。',
+    effectiveAt: '2026-09-15T00:00:00+08:00',
+    actor: '营销产品组',
+    revision: 1,
+    source: 'manual',
+  },
+}
+
+const buildSeedMatrix = (): CollectionMatrixCell[] => {
+  const cells: CollectionMatrixCell[] = []
+  events.forEach((event) => {
+    event.platformRules.forEach((rule) => {
+      const key = `${event.id}:${rule.platform}`
+      const override = cellOverrides[key]
+      if (override) {
+        cells.push({
+          eventId: event.id,
+          platform: rule.platform,
+          state: override.state,
+          basis: override.basis,
+          effectiveAt: override.effectiveAt,
+          updatedAt: override.effectiveAt,
+          actor: override.actor,
+          revision: override.revision,
+          source: override.source,
+        })
+        return
+      }
+      cells.push({
+        eventId: event.id,
+        platform: rule.platform,
+        state: rule.enabled ? 'collecting' : 'stopped',
+        basis: rule.enabled
+          ? '平台规则启用，按触发时机持续采集。'
+          : `平台规则已关闭采集：${rule.note || event.key}`,
+        effectiveAt: event.updatedAt,
+        updatedAt: event.updatedAt,
+        actor: rule.owner,
+        revision: 0,
+        source: 'rule',
+      })
+    })
+  })
+  return cells
+}
+
+const collectionChanges: CollectionChangeRecord[] = [
+  {
+    id: 'chg-006',
+    eventId: 'evt-001',
+    platform: 'web',
+    previous: 'collecting',
+    next: 'stopped',
+    basis: 'INCIDENT-WEB-3320：支付弹窗改造，Web 端重复上报，先行停采。',
+    effectiveAt: '2026-10-05T10:00:00+08:00',
+    actor: 'Web 客户端组',
+    requestId: 'req-web-3320',
+    baseRevision: 4,
+    createdAt: '2026-10-05T09:58:00+08:00',
+  },
+  {
+    id: 'chg-005',
+    eventId: 'evt-001',
+    platform: 'web',
+    previous: 'stopped',
+    next: 'collecting',
+    basis: '弹窗灰度恢复一版，短暂恢复采集验证链路。',
+    effectiveAt: '2026-10-03T14:00:00+08:00',
+    actor: 'Web 客户端组',
+    requestId: 'req-web-resume-1003',
+    baseRevision: 3,
+    createdAt: '2026-10-03T13:55:00+08:00',
+  },
+  {
+    id: 'chg-004',
+    eventId: 'evt-001',
+    platform: 'web',
+    previous: 'collecting',
+    next: 'stopped',
+    basis: 'Web 支付弹窗首次重构，暂停 Web 采集。',
+    effectiveAt: '2026-09-30T18:00:00+08:00',
+    actor: 'Web 客户端组',
+    requestId: 'req-web-stop-0930',
+    baseRevision: 2,
+    createdAt: '2026-09-30T17:50:00+08:00',
+  },
+  {
+    id: 'chg-003',
+    eventId: 'evt-001',
+    platform: 'web',
+    previous: 'stopped',
+    next: 'collecting',
+    basis: '首次重构回退，恢复 Web 采集。',
+    effectiveAt: '2026-09-20T11:00:00+08:00',
+    actor: 'Web 客户端组',
+    requestId: 'req-web-resume-0920',
+    baseRevision: 1,
+    createdAt: '2026-09-20T10:55:00+08:00',
+  },
+  {
+    id: 'chg-002',
+    eventId: 'evt-001',
+    platform: 'web',
+    previous: 'collecting',
+    next: 'stopped',
+    basis: 'Web 端订单提交 SDK 升级，暂停采集。',
+    effectiveAt: '2026-09-12T09:00:00+08:00',
+    actor: 'Web 客户端组',
+    requestId: 'req-web-stop-0912',
+    baseRevision: 0,
+    createdAt: '2026-09-12T08:55:00+08:00',
+  },
+  {
+    id: 'chg-001',
+    eventId: 'evt-005',
+    platform: 'web',
+    previous: 'collecting',
+    next: 'stopped',
+    basis: '历史活动页下线，迁移至 coupon_apply_result。',
+    effectiveAt: '2026-09-15T00:00:00+08:00',
+    actor: '营销产品组',
+    requestId: 'req-legacy-coupon',
+    baseRevision: 0,
+    createdAt: '2026-09-14T18:00:00+08:00',
+  },
+]
+
+export const createSeedState = (): GovernanceState => {
+  const collectionMatrix = buildSeedMatrix()
+  return {
   events,
   scenarios: [
     {
@@ -1048,8 +1261,15 @@ export const createSeedState = (): GovernanceState => ({
       createdAt: '2026-08-19T18:20:00+08:00',
       status: 'verified',
       evidence: 'RPT-INCIDENT-8821 / MOBILE-REL-2026-0819',
+      matrixSnapshot: [],
+      matrixRevision: 0,
     },
   ],
   audit,
+  collectionMatrix,
+  collectionChanges,
+  collectionDrafts: [],
+  matrixRevision: collectionMatrix.reduce((max, cell) => Math.max(max, cell.revision), 0),
   currentVersion: '2026.10.0',
-})
+  }
+}

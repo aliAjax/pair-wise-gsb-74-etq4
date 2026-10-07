@@ -9,12 +9,15 @@ import {
 import { MessagePlugin } from 'tdesign-vue-next'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import { PLATFORM_LABELS } from '@/models/domain'
+import { reconcileRollback } from '@/services/matrix'
 import { useGovernanceStore } from '@/stores/governance'
 
 const store = useGovernanceStore()
 const rollbackVisible = ref(false)
 const verifyVisible = ref(false)
 const selectedRollbackId = ref('')
+const expandedRecordId = ref('')
 const form = reactive({
   releaseId: store.data.releases[0]?.id ?? '',
   reason: '',
@@ -29,8 +32,22 @@ const rollbackRecords = computed(() =>
   store.data.rollbacks.map((record) => ({
     ...record,
     release: store.data.releases.find((release) => release.id === record.releaseId),
+    reconciliation: reconcileRollback(store.data, record),
   })),
 )
+
+const eventKey = (eventId: string): string =>
+  store.data.events.find((event) => event.id === eventId)?.key ?? eventId
+
+const reconciliationLabels: Record<string, string> = {
+  rule_mismatch: '规则/矩阵不一致',
+  stale_ack: '按端确认审批失效',
+  downstream_risk: '下游消费风险',
+}
+
+const toggleSnapshot = (recordId: string): void => {
+  expandedRecordId.value = expandedRecordId.value === recordId ? '' : recordId
+}
 
 const openRollback = (): void => {
   form.releaseId = store.data.releases.find((release) => release.status === 'published')?.id ?? ''
@@ -144,6 +161,59 @@ const verify = async (): Promise<void> => {
                 <dd>{{ record.evidence }}</dd>
               </div>
             </dl>
+
+            <div class="reconcile-block">
+              <div class="reconcile-head">
+                <strong>
+                  回滚后按矩阵对账
+                  <span class="muted">
+                    （快照 {{ record.matrixSnapshot.length }} 端 · r{{ record.matrixRevision }}）
+                  </span>
+                </strong>
+                <t-button
+                  v-if="record.matrixSnapshot.length"
+                  variant="text"
+                  size="small"
+                  @click="toggleSnapshot(record.id)"
+                >
+                  {{ expandedRecordId === record.id ? '收起矩阵快照' : '查看矩阵快照' }}
+                </t-button>
+              </div>
+              <div v-if="record.reconciliation.length" class="reconcile-list">
+                <div
+                  v-for="(item, index) in record.reconciliation"
+                  :key="`${record.id}-${index}`"
+                  class="reconcile-item"
+                >
+                  <StatusTag :value="item.severity" />
+                  <div>
+                    <strong>
+                      {{ reconciliationLabels[item.kind] }} ·
+                      <code>{{ eventKey(item.eventId) }}</code> /
+                      {{ PLATFORM_LABELS[item.platform] }}
+                    </strong>
+                    <p>{{ item.detail }}</p>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="reconcile-ok">
+                <CheckCircleIcon />
+                <span v-if="record.matrixSnapshot.length">矩阵、平台规则与按端审批一致，对账通过。</span>
+                <span v-else>历史回滚未留存矩阵快照，按平台规则现状核对。</span>
+              </div>
+              <div v-if="expandedRecordId === record.id" class="snapshot-grid">
+                <div
+                  v-for="cell in record.matrixSnapshot"
+                  :key="`${cell.eventId}-${cell.platform}`"
+                  class="snapshot-cell"
+                >
+                  <code>{{ eventKey(cell.eventId) }}</code>
+                  <span>{{ PLATFORM_LABELS[cell.platform] }}</span>
+                  <StatusTag :value="cell.state" />
+                </div>
+              </div>
+            </div>
+
             <t-button
               v-if="record.status === 'executed'"
               theme="primary"
@@ -323,6 +393,79 @@ const verify = async (): Promise<void> => {
 
 .rollback-main :deep(.t-button) {
   justify-self: start;
+}
+
+.reconcile-block {
+  display: grid;
+  gap: 10px;
+  padding: 13px 14px;
+  border: 1px solid #e2e7ee;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.reconcile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.reconcile-head strong {
+  font-size: 12px;
+}
+
+.reconcile-list {
+  display: grid;
+  gap: 8px;
+}
+
+.reconcile-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid #ecd7d4;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.reconcile-item p {
+  margin: 3px 0 0;
+  color: #5d687a;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.reconcile-ok {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0c7354;
+  font-size: 12px;
+}
+
+.snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed #d7dee8;
+}
+
+.snapshot-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px solid #e3e8ef;
+  border-radius: 5px;
+  background: #fff;
+  font-size: 11px;
+}
+
+.snapshot-cell code {
+  color: #1264c5;
 }
 
 .dialog-footer {

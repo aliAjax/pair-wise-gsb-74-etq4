@@ -34,6 +34,12 @@ export const useValidationQuery = () =>
     queryFn: governanceApi.listValidations,
   })
 
+export const useCollectionMatrixQuery = () =>
+  useQuery({
+    queryKey: ['collection-matrix'],
+    queryFn: governanceApi.getCollectionMatrix,
+  })
+
 export const useLineageQuery = () =>
   useQuery({
     queryKey: ['lineage'],

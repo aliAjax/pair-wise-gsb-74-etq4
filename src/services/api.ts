@@ -1,11 +1,13 @@
 import axios, { type AxiosAdapter } from 'axios'
 import type {
+  CollectionMatrixCell,
   DownstreamDependency,
   EventDefinition,
   ReleaseCandidate,
   ValidationIssue,
 } from '@/models/domain'
 import { loadState } from '@/services/repository'
+import { collectionMatrixExport } from '@/services/matrix'
 import { validateGovernance } from '@/services/selectors'
 
 export interface EventListFilters {
@@ -13,6 +15,14 @@ export interface EventListFilters {
   status?: string
   platform?: string
   category?: string
+}
+
+export interface CollectionMatrixPayload {
+  matrix: CollectionMatrixCell[]
+  revision: number
+  stoppedCellCount: number
+  draftCount: number
+  rows: ReturnType<typeof collectionMatrixExport>
 }
 
 export interface DashboardPayload {
@@ -23,6 +33,8 @@ export interface DashboardPayload {
   pendingMigrations: number
   validationIssueCount: number
   criticalIssueCount: number
+  stoppedCellCount: number
+  invalidAckCount: number
   currentRelease: ReleaseCandidate | null
 }
 
@@ -39,6 +51,11 @@ const localAdapter: AxiosAdapter = async (config) => {
     const issues = validateGovernance(state)
     const currentRelease =
       state.releases.find((release) => release.status === 'reviewing') ?? state.releases[0] ?? null
+    const stoppedCellCount = state.collectionMatrix.filter(
+      (cell) => cell.state === 'stopped',
+    ).length
+    const invalidAckCount =
+      currentRelease?.platformAcks.filter((ack) => ack.invalidated).length ?? 0
     const data: DashboardPayload = {
       eventCount: state.events.length,
       activeEventCount: state.events.filter((event) =>
@@ -49,9 +66,13 @@ const localAdapter: AxiosAdapter = async (config) => {
       ).length,
       dependencyCount: state.dependencies.length,
       pendingMigrations:
-        currentRelease?.migrationConfirmations.filter((item) => item.status === 'pending').length ?? 0,
+        currentRelease?.migrationConfirmations.filter(
+          (item) => item.status !== 'confirmed' || item.invalidated,
+        ).length ?? 0,
       validationIssueCount: issues.length,
       criticalIssueCount: issues.filter((issue) => issue.severity === 'critical').length,
+      stoppedCellCount,
+      invalidAckCount,
       currentRelease,
     }
     return {
@@ -72,11 +93,14 @@ const localAdapter: AxiosAdapter = async (config) => {
         event.key.toLowerCase().includes(keyword) ||
         event.displayName.toLowerCase().includes(keyword) ||
         event.owner.toLowerCase().includes(keyword)
-      const platformMatches =
-        !params.platform ||
-        event.platformRules.some(
-          (rule) => rule.platform === params.platform && rule.enabled,
-        )
+      const platformMatches = !params.platform
+        ? true
+        : state.collectionMatrix.some(
+            (cell) =>
+              cell.eventId === event.id &&
+              cell.platform === params.platform &&
+              cell.state === 'collecting',
+          )
       return (
         textMatches &&
         platformMatches &&
@@ -120,6 +144,24 @@ const localAdapter: AxiosAdapter = async (config) => {
     const releaseId = url.split('/')[2]
     const data = state.releases.find((release) => release.id === releaseId)
     if (!data) throw new Error(`发布候选不存在：${releaseId}`)
+    return {
+      data,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+
+  if (url === '/collection-matrix') {
+    const rows = collectionMatrixExport(state)
+    const data: CollectionMatrixPayload = {
+      matrix: state.collectionMatrix,
+      revision: state.matrixRevision,
+      stoppedCellCount: state.collectionMatrix.filter((cell) => cell.state === 'stopped').length,
+      draftCount: state.collectionDrafts.length,
+      rows,
+    }
     return {
       data,
       status: 200,
@@ -186,6 +228,10 @@ export const governanceApi = {
   },
   listValidations: async (): Promise<ValidationIssue[]> => {
     const response = await http.get<ValidationIssue[]>('/validations')
+    return response.data
+  },
+  getCollectionMatrix: async (): Promise<CollectionMatrixPayload> => {
+    const response = await http.get<CollectionMatrixPayload>('/collection-matrix')
     return response.data
   },
   getLineage: async (): Promise<LineagePayload> => {

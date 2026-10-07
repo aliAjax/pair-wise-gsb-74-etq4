@@ -7,12 +7,19 @@ import {
   ChevronRightIcon,
   CloseCircleIcon,
   DownloadIcon,
+  StopCircleIcon,
 } from 'tdesign-icons-vue-next'
 import { MessagePlugin } from 'tdesign-vue-next'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { useReleaseQuery, useReleasesQuery } from '@/composables/useGovernanceQueries'
-import type { ReleaseApproval } from '@/models/domain'
+import type { Platform, PlatformReleaseAck, ReleaseApproval } from '@/models/domain'
+import { PLATFORM_LABELS } from '@/models/domain'
+import {
+  dependencyModeLabel,
+  releaseAckPlatforms,
+  releaseCollectionImpacts,
+} from '@/services/matrix'
 import { releaseReadiness } from '@/services/selectors'
 import { useGovernanceStore } from '@/stores/governance'
 
@@ -37,6 +44,7 @@ const readiness = computed(() => (release.value ? releaseReadiness(release.value
 const createVisible = ref(false)
 const migrationVisible = ref(false)
 const approvalVisible = ref(false)
+const platformAckVisible = ref(false)
 const createForm = reactive({
   version: '',
   title: '',
@@ -50,21 +58,41 @@ const migrationForm = reactive({
 const selectedApprovalIds = ref<string[]>([])
 const approvalComment = ref('')
 const singleApproval = ref<ReleaseApproval | null>(null)
+const activeAck = ref<PlatformReleaseAck | null>(null)
+const ackComment = ref('')
 
 const eventName = (eventId: string): string => {
   const event = store.data.events.find((item) => item.id === eventId)
   return event ? `${event.displayName} (${event.key})` : eventId
 }
+const eventKey = (eventId: string): string =>
+  store.data.events.find((item) => item.id === eventId)?.key ?? eventId
 const dependencyName = (dependencyId: string): string =>
   store.data.dependencies.find((dependency) => dependency.id === dependencyId)?.name ?? dependencyId
 const roleLabel = (role: ReleaseApproval['role']): string =>
   ({ data: '数据负责人', product: '产品负责人', client: '客户端负责人', qa: '测试负责人' })[role]
+
+const collectionImpacts = computed(() =>
+  release.value ? releaseCollectionImpacts(store.data, release.value) : [],
+)
+const stoppedImpacts = computed(() =>
+  collectionImpacts.value.filter((impact) => impact.state === 'stopped'),
+)
+const ackPlatforms = computed(() =>
+  release.value ? releaseAckPlatforms(store.data.collectionMatrix, release.value.eventIds) : [],
+)
+const ackOf = (platform: Platform): PlatformReleaseAck | undefined =>
+  release.value?.platformAcks.find((ack) => ack.platform === platform)
+
+const formatTime = (value?: string): string =>
+  value ? new Date(value).toLocaleString('zh-CN') : '-'
 
 const invalidate = async (): Promise<void> => {
   await queryClient.invalidateQueries({ queryKey: ['release'] })
   await queryClient.invalidateQueries({ queryKey: ['releases'] })
   await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
   await queryClient.invalidateQueries({ queryKey: ['lineage'] })
+  await queryClient.invalidateQueries({ queryKey: ['collection-matrix'] })
 }
 
 const openCreate = (): void => {
@@ -102,7 +130,7 @@ const confirmMigration = async (): Promise<void> => {
     await MessagePlugin.error('确认人和迁移说明不能为空')
     return
   }
-  store.confirmMigration(
+  store.confirmPlatformMigration(
     release.value.id,
     migrationForm.confirmationId,
     migrationForm.reviewer,
@@ -110,7 +138,39 @@ const confirmMigration = async (): Promise<void> => {
   )
   migrationVisible.value = false
   await invalidate()
-  await MessagePlugin.success('下游迁移已确认')
+  await MessagePlugin.success('下游按端迁移已确认')
+}
+
+const openPlatformAck = (platform: Platform): void => {
+  const ack = ackOf(platform)
+  if (!ack) return
+  activeAck.value = ack
+  ackComment.value = ack.invalidated ? '' : ack.comment
+  platformAckVisible.value = true
+}
+
+const submitPlatformAck = async (
+  status: 'confirmed' | 'approved' | 'rejected',
+): Promise<void> => {
+  if (!release.value || !activeAck.value || !ackComment.value.trim()) {
+    await MessagePlugin.error('该端确认或审批意见不能为空')
+    return
+  }
+  store.updatePlatformAck(
+    release.value.id,
+    activeAck.value.platform,
+    status,
+    ackComment.value,
+  )
+  platformAckVisible.value = false
+  await invalidate()
+  await MessagePlugin.success(
+    status === 'approved'
+      ? `${PLATFORM_LABELS[activeAck.value.platform]} 端审批已通过`
+      : status === 'rejected'
+        ? `${PLATFORM_LABELS[activeAck.value.platform]} 端审批已驳回`
+        : `${PLATFORM_LABELS[activeAck.value.platform]} 端已确认`,
+  )
 }
 
 const openApproval = (approval: ReleaseApproval): void => {
@@ -178,7 +238,16 @@ const downloadDiff = (): void => {
       events: release.value.eventIds.map(eventName),
       differences: release.value.differences,
       affectedDependencies: release.value.affectedDependencyIds.map(dependencyName),
+      collectionMatrix: releaseCollectionImpacts(store.data, release.value).map((impact) => ({
+        event: eventKey(impact.eventId),
+        platform: PLATFORM_LABELS[impact.platform],
+        state: impact.state,
+        basis: impact.basis,
+        effectiveAt: impact.effectiveAt,
+        downstream: impact.dependencies.map((dependency) => dependency.name),
+      })),
       migrationConfirmations: release.value.migrationConfirmations,
+      platformAcks: release.value.platformAcks,
     },
     null,
     2,
@@ -258,6 +327,61 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
         </t-button>
       </section>
 
+      <section class="panel collection-panel">
+        <div class="panel-header">
+          <h2 class="panel-title">发布范围内按端采集状态</h2>
+          <span class="muted">
+            {{ stoppedImpacts.length }} 个端已停采，发布候选继续放行，下游按其消费范围对账
+          </span>
+        </div>
+        <div class="impact-table-wrap">
+          <table class="impact-table">
+            <thead>
+              <tr>
+                <th>事件</th>
+                <th>平台</th>
+                <th>采集状态</th>
+                <th>依据</th>
+                <th>生效时间</th>
+                <th>仍消费的下游</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="impact in collectionImpacts"
+                :key="`${impact.eventId}-${impact.platform}`"
+                :class="{ stopped: impact.state === 'stopped' }"
+              >
+                <td><code>{{ eventKey(impact.eventId) }}</code></td>
+                <td>{{ PLATFORM_LABELS[impact.platform] }}</td>
+                <td>
+                  <span class="state-inline">
+                    <StopCircleIcon v-if="impact.state === 'stopped'" class="stop-icon" />
+                    <StatusTag :value="impact.state" />
+                  </span>
+                </td>
+                <td class="basis-cell" :title="impact.basis">{{ impact.basis }}</td>
+                <td>{{ formatTime(impact.effectiveAt) }}</td>
+                <td>
+                  <span v-if="impact.dependencies.length" class="dep-tags">
+                    <t-tag
+                      v-for="dependency in impact.dependencies"
+                      :key="dependency.id"
+                      size="small"
+                      :theme="impact.state === 'stopped' ? 'warning' : 'default'"
+                      variant="light"
+                    >
+                      {{ dependency.name }}（{{ dependencyModeLabel(dependency) }}）
+                    </t-tag>
+                  </span>
+                  <span v-else class="muted">无</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <div class="release-grid">
         <section class="panel">
           <div class="panel-header">
@@ -330,15 +454,40 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
             <div class="gate-row">
               <CheckCircleIcon
                 :class="{
-                  pending: release.migrationConfirmations.some((item) => item.status !== 'confirmed'),
+                  pending: release.migrationConfirmations.some(
+                    (item) => item.status !== 'confirmed' || item.invalidated,
+                  ),
                 }"
               />
               <div>
-                <strong>下游迁移确认</strong>
+                <strong>下游按端迁移确认</strong>
                 <span>
                   {{
-                    release.migrationConfirmations.filter((item) => item.status === 'confirmed').length
-                  }}/{{ release.migrationConfirmations.length }} 已确认
+                    release.migrationConfirmations.filter(
+                      (item) => item.status === 'confirmed' && !item.invalidated,
+                    ).length
+                  }}/{{ release.migrationConfirmations.length }} 已确认（按消费端逐端确认）
+                </span>
+              </div>
+            </div>
+            <div class="gate-row">
+              <CheckCircleIcon
+                :class="{
+                  pending: ackPlatforms.some(
+                    (platform) =>
+                      ackOf(platform)?.status !== 'approved' || ackOf(platform)?.invalidated,
+                  ),
+                }"
+              />
+              <div>
+                <strong>各平台确认与审批</strong>
+                <span>
+                  {{
+                    ackPlatforms.filter(
+                      (platform) =>
+                        ackOf(platform)?.status === 'approved' && !ackOf(platform)?.invalidated,
+                    ).length
+                  }}/{{ ackPlatforms.length }} 端已审批；该端启停变化后立即失效
                 </span>
               </div>
             </div>
@@ -375,26 +524,80 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
               v-for="confirmation in release.migrationConfirmations"
               :key="confirmation.id"
               class="migration-card"
+              :class="{ invalid: confirmation.invalidated }"
             >
               <div>
-                <strong>{{ dependencyName(confirmation.dependencyId) }}</strong>
+                <strong>
+                  {{ dependencyName(confirmation.dependencyId) }}
+                  <t-tag size="small" theme="primary" variant="light">
+                    {{ confirmation.platform ? PLATFORM_LABELS[confirmation.platform] : '全量口径' }}
+                  </t-tag>
+                </strong>
                 <span>{{ confirmation.reviewer || '未指定确认人' }}</span>
               </div>
-              <StatusTag :value="confirmation.status" />
-              <p>{{ confirmation.note || '尚未填写迁移确认说明。' }}</p>
+              <StatusTag :value="confirmation.invalidated ? 'pending' : confirmation.status" />
+              <p v-if="confirmation.invalidated" class="invalid-reason">
+                {{ confirmation.invalidReason }}
+              </p>
+              <p v-else>{{ confirmation.note || '尚未填写该端迁移确认说明。' }}</p>
               <t-button
                 variant="outline"
                 size="small"
-                :disabled="confirmation.status === 'confirmed'"
+                :disabled="confirmation.status === 'confirmed' && !confirmation.invalidated"
                 @click="openMigration(confirmation.id)"
               >
-                确认迁移
+                {{ confirmation.invalidated ? '重新确认迁移' : '确认迁移' }}
               </t-button>
             </article>
           </div>
         </section>
 
         <section class="panel">
+          <div class="panel-header">
+            <h2 class="panel-title">各平台确认与审批</h2>
+            <span class="muted">该端采集状态变化后需重新确认</span>
+          </div>
+          <div class="ack-list">
+            <article
+              v-for="platform in ackPlatforms"
+              :key="platform"
+              class="ack-card"
+              :class="{ invalid: ackOf(platform)?.invalidated }"
+            >
+              <div class="ack-head">
+                <strong>{{ PLATFORM_LABELS[platform] }}</strong>
+                <StatusTag
+                  :value="
+                    ackOf(platform)?.invalidated
+                      ? 'pending'
+                      : (ackOf(platform)?.status ?? 'pending')
+                  "
+                />
+              </div>
+              <span class="ack-owner">{{ ackOf(platform)?.owner ?? '平台负责人' }}</span>
+              <p v-if="ackOf(platform)?.invalidated" class="invalid-reason">
+                {{ ackOf(platform)?.invalidReason }}
+              </p>
+              <p v-else>{{ ackOf(platform)?.comment || '该端尚未完成确认与审批。' }}</p>
+              <div class="ack-meta">
+                <span>基于矩阵 r{{ ackOf(platform)?.matrixRevision ?? 0 }}</span>
+                <span>{{ formatTime(ackOf(platform)?.createdAt) }}</span>
+              </div>
+              <t-button
+                size="small"
+                variant="outline"
+                :disabled="!ackOf(platform)"
+                @click="openPlatformAck(platform)"
+              >
+                {{ ackOf(platform)?.invalidated ? '重新确认/审批' : '确认与审批' }}
+              </t-button>
+            </article>
+          </div>
+        </section>
+      </div>
+
+      <div class="review-columns single-row">
+        <section class="panel four-role-panel">
           <div class="panel-header">
             <h2 class="panel-title">四角色审批</h2>
           </div>
@@ -496,6 +699,41 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
         </t-button>
       </div>
     </t-dialog>
+    <t-dialog
+      v-if="activeAck"
+      v-model:visible="platformAckVisible"
+      :header="`${PLATFORM_LABELS[activeAck.platform]} 端确认与审批`"
+      width="620px"
+      :footer="false"
+    >
+      <div class="selected-approval">
+        <strong>{{ PLATFORM_LABELS[activeAck.platform] }} · {{ activeAck.owner }}</strong>
+        <span>当前基于矩阵 r{{ activeAck.matrixRevision }}</span>
+      </div>
+      <div v-if="activeAck.invalidated" class="invalid-banner">
+        {{ activeAck.invalidReason }}
+      </div>
+      <div class="field">
+        <label>该端确认 / 审批意见</label>
+        <t-textarea
+          v-model="ackComment"
+          :autosize="{ minRows: 5, maxRows: 8 }"
+          placeholder="确认该端当前采集或停采状态及下游消费口径"
+        />
+      </div>
+      <div class="dialog-footer">
+        <t-button variant="outline" @click="platformAckVisible = false">取消</t-button>
+        <t-button variant="outline" @click="submitPlatformAck('confirmed')">仅确认</t-button>
+        <t-button theme="danger" @click="submitPlatformAck('rejected')">
+          <template #icon><CloseCircleIcon /></template>
+          驳回
+        </t-button>
+        <t-button theme="primary" @click="submitPlatformAck('approved')">
+          <template #icon><CheckCircleIcon /></template>
+          审批通过
+        </t-button>
+      </div>
+    </t-dialog>
   </div>
 </template>
 
@@ -506,6 +744,122 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
 
 .release-field {
   min-width: 390px;
+}
+
+.collection-panel .impact-table-wrap {
+  overflow-x: auto;
+}
+
+.impact-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.impact-table th,
+.impact-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #edf0f3;
+  text-align: left;
+  font-size: 12px;
+  vertical-align: top;
+}
+
+.impact-table thead th {
+  color: #6a7588;
+  background: #f7f9fb;
+}
+
+.impact-table tr.stopped {
+  background: #fff8f7;
+}
+
+.impact-table .basis-cell {
+  max-width: 300px;
+  color: #596579;
+}
+
+.state-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stop-icon {
+  color: #c7362c;
+}
+
+.dep-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.invalid-reason {
+  color: #a8352a !important;
+}
+
+.ack-list {
+  display: grid;
+  gap: 1px;
+  background: #e8ebef;
+}
+
+.ack-card {
+  display: grid;
+  gap: 7px;
+  padding: 14px 16px;
+  background: #fff;
+}
+
+.ack-card.invalid {
+  background: #fff7f6;
+}
+
+.ack-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ack-owner,
+.ack-meta {
+  color: #7d8898;
+  font-size: 11px;
+}
+
+.ack-meta {
+  display: flex;
+  justify-content: space-between;
+}
+
+.ack-card p {
+  margin: 0;
+  color: #5c687a;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ack-card :deep(.t-button) {
+  justify-self: start;
+}
+
+.invalid-banner {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid #f2c4c0;
+  border-radius: 6px;
+  color: #a8352a;
+  background: #fff5f4;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.migration-card.invalid {
+  background: #fff7f6;
+}
+
+.review-columns.single-row {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .release-overview {

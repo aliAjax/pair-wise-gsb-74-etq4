@@ -125,11 +125,16 @@ const propertyColumns = [
 ]
 const ruleColumns = [
   { colKey: 'platform', title: '平台', width: 100 },
-  { colKey: 'enabled', title: '状态', width: 90 },
+  { colKey: 'enabled', title: '规则状态', width: 100 },
+  { colKey: 'matrix', title: '采集矩阵', width: 110 },
   { colKey: 'trigger', title: '触发时机', minWidth: 260 },
   { colKey: 'owner', title: '负责人', width: 130 },
   { colKey: 'actions', title: '操作', width: 90 },
 ]
+
+const matrixStateOf = (eventId: string, platform: Platform): string =>
+  store.data.collectionMatrix.find((cell) => cell.eventId === eventId && cell.platform === platform)
+    ?.state ?? ''
 
 const invalidate = async (): Promise<void> => {
   await queryClient.invalidateQueries({ queryKey: ['events'] })
@@ -491,6 +496,10 @@ const setPlatform = (value: unknown): void => {
           >
             <template #enabled="{ row }">
               <StatusTag :value="row.enabled ? 'active' : 'disabled'" />
+            </template>
+            <template #matrix="{ row }">
+              <StatusTag v-if="matrixStateOf(selectedEvent.id, row.platform)" :value="matrixStateOf(selectedEvent.id, row.platform)" />
+              <span v-else class="muted">未登记</span>
             </template>
             <template #actions="{ row }">
               <t-button variant="text" size="small" @click="openRuleEditor(row)">

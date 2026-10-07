@@ -172,6 +172,16 @@ const pendingApprovals = computed(
             </div>
           </div>
           <div class="health-row">
+            <span class="health-icon warning"><ErrorCircleIcon /></span>
+            <div>
+              <strong>按端停采与失效审批</strong>
+              <span>
+                {{ dashboard?.stoppedCellCount ?? 0 }} 个端已停采 ·
+                {{ dashboard?.invalidAckCount ?? 0 }} 个平台确认审批已失效
+              </span>
+            </div>
+          </div>
+          <div class="health-row">
             <span class="health-icon neutral"><FileSearchIcon /></span>
             <div>
               <strong>规则校验问题</strong>

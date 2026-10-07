@@ -9,6 +9,7 @@ import type {
   Severity,
   ValidationIssue,
 } from '@/models/domain'
+import { dependencyConsumes, matrixCell } from '@/services/matrix'
 
 const NAMING_PATTERN = /^[a-z][a-z0-9_]{2,31}$/
 const normalize = (value: string): string =>
@@ -232,8 +233,24 @@ export const validateGovernance = (state: GovernanceState): ValidationIssue[] =>
           })
         }
       })
+  })
 
+  state.events.forEach((event) => {
     event.platformRules.forEach((rule) => {
+      const cell = matrixCell(state, event.id, rule.platform)
+      if (cell && rule.enabled !== (cell.state === 'collecting')) {
+        issues.push({
+          id: `matrix-rule-${rule.id}`,
+          kind: 'matrix_rule_mismatch',
+          severity: 'critical',
+          title: `${event.key} 的 ${rule.platform} 平台规则与采集矩阵不一致`,
+          detail: `平台规则${rule.enabled ? '仍在采集' : '已关闭'}，矩阵登记为“${
+            cell.state === 'stopped' ? '已停采' : '采集中'
+          }”。`,
+          entityId: event.id,
+          suggestion: '以按端采集矩阵为准同步平台规则，或在矩阵页重新登记该端状态。',
+        })
+      }
       rule.requiredPropertyIds.forEach((propertyId) => {
         const property = event.properties.find((item) => item.id === propertyId)
         if (property && !property.required) {
@@ -250,6 +267,31 @@ export const validateGovernance = (state: GovernanceState): ValidationIssue[] =>
       })
     })
   })
+
+  // 已停采的端仍被未迁移的下游按其消费范围消费
+  state.collectionMatrix
+    .filter((cell) => cell.state === 'stopped')
+    .forEach((cell) => {
+      const event = state.events.find((item) => item.id === cell.eventId)
+      state.dependencies
+        .filter(
+          (dependency) =>
+            dependency.eventIds.includes(cell.eventId) &&
+            dependencyConsumes(dependency, cell.platform) &&
+            dependency.status !== 'migrated',
+        )
+        .forEach((dependency) => {
+          issues.push({
+            id: `stopped-consumed-${cell.eventId}-${cell.platform}-${dependency.id}`,
+            kind: 'stopped_platform_consumed',
+            severity: 'high',
+            title: `${event?.key ?? cell.eventId} 的 ${cell.platform} 端已停采但 ${dependency.name} 仍在消费`,
+            detail: `停采依据：${cell.basis}`,
+            entityId: dependency.id,
+            suggestion: '通知下游切换替代事件/端口径，或恢复该端采集并重新评审。',
+          })
+        })
+    })
 
   state.dependencies.forEach((dependency) => {
     dependency.propertyRefs.forEach((reference) => {
@@ -335,17 +377,22 @@ export const releaseReadiness = (
 ): number => {
   const migrationTotal = release.migrationConfirmations.length
   const migrationDone = release.migrationConfirmations.filter(
-    (item) => item.status === 'confirmed',
+    (item) => item.status === 'confirmed' && !item.invalidated,
   ).length
   const approvalTotal = release.approvals.length
   const approvalDone = release.approvals.filter((item) => item.status === 'approved').length
+  const ackTotal = release.platformAcks.length
+  const ackDone = release.platformAcks.filter(
+    (item) => item.status === 'approved' && !item.invalidated,
+  ).length
   const issuePenalty = Math.min(
-    40,
+    30,
     issues.filter((issue) => release.eventIds.includes(issue.entityId)).length * 8,
   )
-  const migrationScore = migrationTotal === 0 ? 40 : (migrationDone / migrationTotal) * 40
-  const approvalScore = approvalTotal === 0 ? 30 : (approvalDone / approvalTotal) * 30
-  return Math.max(0, Math.round(migrationScore + approvalScore + 30 - issuePenalty))
+  const migrationScore = migrationTotal === 0 ? 30 : (migrationDone / migrationTotal) * 30
+  const approvalScore = approvalTotal === 0 ? 20 : (approvalDone / approvalTotal) * 20
+  const ackScore = ackTotal === 0 ? 30 : (ackDone / ackTotal) * 30
+  return Math.max(0, Math.round(migrationScore + approvalScore + ackScore + 20 - issuePenalty))
 }
 
 export const propertyReferences = (

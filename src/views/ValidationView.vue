@@ -26,6 +26,8 @@ const kindOptions = [
   { label: '类型变化', value: 'type_change' },
   { label: '删除字段引用', value: 'deleted_property_referenced' },
   { label: '必填差异', value: 'required_mismatch' },
+  { label: '规则/矩阵不一致', value: 'matrix_rule_mismatch' },
+  { label: '停采端仍被消费', value: 'stopped_platform_consumed' },
 ]
 const severityOptions = [
   { label: '严重', value: 'critical' },

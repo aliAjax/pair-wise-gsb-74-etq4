@@ -34,6 +34,11 @@ const router = createRouter({
           component: () => import('@/views/ReleaseReviewView.vue'),
         },
         {
+          path: 'collection-matrix',
+          name: 'collection-matrix',
+          component: () => import('@/views/CollectionMatrixView.vue'),
+        },
+        {
           path: 'deprecations',
           name: 'deprecations',
           component: () => import('@/views/DeprecationView.vue'),

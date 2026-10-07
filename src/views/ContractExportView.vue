@@ -4,6 +4,12 @@ import { CheckCircleIcon, DownloadIcon } from 'tdesign-icons-vue-next'
 import { MessagePlugin } from 'tdesign-vue-next'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import { PLATFORM_LABELS } from '@/models/domain'
+import {
+  dependencyModeLabel,
+  downstreamConsumers,
+  eventMatrixCells,
+} from '@/services/matrix'
 import { useGovernanceStore } from '@/stores/governance'
 
 const store = useGovernanceStore()
@@ -47,12 +53,22 @@ const markdown = computed(() => {
             `| ${property.name} | ${property.type} | ${property.required ? '是' : '否'} | ${property.enumValues.join('/') || '-'} | ${property.description} |`,
         ),
       '',
-      '**平台差异**',
+      '**按端采集矩阵**',
       '',
-      ...event.platformRules.map(
-        (rule) =>
-          `- ${rule.platform}: ${rule.enabled ? rule.trigger : '已停用'}（${rule.owner}）`,
-      ),
+      '| 平台 | 采集状态 | 依据 | 生效时间 | 仍消费下游 |',
+      '| --- | --- | --- | --- | --- |',
+      ...eventMatrixCells(store.data, event.id).flatMap((cell) => [
+        `| ${PLATFORM_LABELS[cell.platform]} | ${
+          cell.state === 'stopped' ? '已停采' : '采集中'
+        } | ${cell.basis.replace(/\|/g, '/')} | ${cell.effectiveAt.slice(0, 16)} | ${
+          downstreamConsumers(store.data, event.id, cell.platform)
+            .map(
+              (dependency) =>
+                `${dependency.name}（${dependencyModeLabel(dependency)}）`,
+            )
+            .join('、') || '无'
+        } |`,
+      ]),
       '',
     ]),
   ].join('\n')

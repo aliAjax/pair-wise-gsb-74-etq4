@@ -27,7 +27,10 @@ const labels: Record<string, string> = {
   planned: '已计划',
   announced: '已公告',
   stopped: '已停采',
+  collecting: '采集中',
   cancelled: '已取消',
+  conflict: '冲突',
+  draft_pending: '草稿待处理',
   executed: '已执行',
   verified: '已验证',
   rolled_back: '已回滚',
@@ -37,6 +40,8 @@ const labels: Record<string, string> = {
   type_change: '类型变化',
   deleted_property_referenced: '删除字段引用',
   required_mismatch: '必填差异',
+  matrix_rule_mismatch: '规则/矩阵不一致',
+  stopped_platform_consumed: '停采端仍被消费',
 }
 
 const theme = computed(() => {
@@ -44,6 +49,9 @@ const theme = computed(() => {
     critical: 'danger',
     rejected: 'danger',
     retired: 'danger',
+    stopped: 'danger',
+    conflict: 'danger',
+    draft_pending: 'warning',
     deleted_property_referenced: 'danger',
     high: 'warning',
     reviewing: 'warning',
@@ -56,6 +64,7 @@ const theme = computed(() => {
     approved: 'success',
     published: 'success',
     active: 'success',
+    collecting: 'success',
     migrated: 'success',
     confirmed: 'success',
     verified: 'success',
