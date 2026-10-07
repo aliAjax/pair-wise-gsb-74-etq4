@@ -54,9 +54,19 @@ const pendingApprovals = computed(
         <div class="metric-note">{{ dashboard?.draftEventCount ?? 0 }} 个草稿或评审中</div>
       </div>
       <div class="metric">
+        <div class="metric-label">采集矩阵</div>
+        <div class="metric-value">{{ dashboard?.stoppedPlatformCount ?? 0 }}</div>
+        <div class="metric-note">
+          端已停采 · {{ dashboard?.matrixDraftCount ?? 0 }} 个冲突草稿
+        </div>
+      </div>
+      <div class="metric">
         <div class="metric-label">下游依赖</div>
         <div class="metric-value">{{ dashboard?.dependencyCount ?? store.data.dependencies.length }}</div>
-        <div class="metric-note">{{ dashboard?.pendingMigrations ?? 0 }} 个待迁移确认</div>
+        <div class="metric-note">
+          {{ dashboard?.pendingMigrations ?? 0 }} 个待迁移 ·
+          {{ dashboard?.partialDependencyCount ?? 0 }} 个部分消费
+        </div>
       </div>
       <div class="metric">
         <div class="metric-label">契约问题</div>

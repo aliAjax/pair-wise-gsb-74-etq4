@@ -4,6 +4,8 @@ import { CheckCircleIcon, DownloadIcon } from 'tdesign-icons-vue-next'
 import { MessagePlugin } from 'tdesign-vue-next'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import type { EventDefinition } from '@/models/domain'
+import { PLATFORM_LABELS, resolveEventMatrix } from '@/services/selectors'
 import { useGovernanceStore } from '@/stores/governance'
 
 const store = useGovernanceStore()
@@ -24,6 +26,19 @@ watch(includeDeprecated, () => {
     eligibleEvents.value.some((event) => event.id === id),
   )
 })
+
+const platformLines = (event: EventDefinition): string[] =>
+  resolveEventMatrix(store.data, event.id)
+    .filter((cell) => cell.source !== 'none')
+    .map((cell) => {
+      if (cell.state === 'collecting') {
+        const trigger = event.platformRules.find((rule) => rule.platform === cell.platform)?.trigger
+        return `- ${PLATFORM_LABELS[cell.platform]}: 采集中${trigger ? `（${trigger}）` : ''}`
+      }
+      return `- ${PLATFORM_LABELS[cell.platform]}: 已停采（依据：${cell.basis || '未填写'}，生效：${
+        cell.effectiveAt ? new Date(cell.effectiveAt).toLocaleString('zh-CN') : '立即'
+      }）`
+    })
 
 const markdown = computed(() => {
   const events = store.data.events.filter((event) => selectedEventIds.value.includes(event.id))
@@ -47,12 +62,9 @@ const markdown = computed(() => {
             `| ${property.name} | ${property.type} | ${property.required ? '是' : '否'} | ${property.enumValues.join('/') || '-'} | ${property.description} |`,
         ),
       '',
-      '**平台差异**',
+      '**各端采集状态**',
       '',
-      ...event.platformRules.map(
-        (rule) =>
-          `- ${rule.platform}: ${rule.enabled ? rule.trigger : '已停用'}（${rule.owner}）`,
-      ),
+      ...platformLines(event),
       '',
     ]),
   ].join('\n')

@@ -1,14 +1,27 @@
 import type {
   ContractDifference,
+  DownstreamDependency,
   EventDefinition,
   EventProperty,
   EventVersionSnapshot,
   GovernanceState,
+  MatrixCell,
+  Platform,
   ReleaseCandidate,
   SampleValidationResult,
   Severity,
   ValidationIssue,
 } from '@/models/domain'
+
+export const PLATFORM_ORDER: Platform[] = ['web', 'ios', 'android', 'server', 'miniprogram']
+
+export const PLATFORM_LABELS: Record<Platform, string> = {
+  web: 'Web',
+  ios: 'iOS',
+  android: 'Android',
+  server: 'Server',
+  miniprogram: '小程序',
+}
 
 const NAMING_PATTERN = /^[a-z][a-z0-9_]{2,31}$/
 const normalize = (value: string): string =>
@@ -356,3 +369,126 @@ export const propertyReferences = (
     const property = event.properties.find((item) => item.id === propertyId)
     return property ? [{ event, property }] : []
   })
+
+/**
+ * 解析事件在某一端的采集单元格。
+ * 优先级：事件生命周期 > 显式矩阵记录 > 平台规则 > 未接入。
+ */
+export const resolveMatrixCell = (
+  state: GovernanceState,
+  eventId: string,
+  platform: Platform,
+): MatrixCell => {
+  const event = state.events.find((item) => item.id === eventId)
+  const record = state.collectionMatrix.find(
+    (item) => item.eventId === eventId && item.platform === platform,
+  )
+  const rule = event?.platformRules.find((item) => item.platform === platform)
+  const base: MatrixCell = {
+    eventId,
+    platform,
+    state: 'not_configured',
+    basis: '该平台未配置采集规则',
+    effectiveAt: '',
+    actor: '',
+    revision: 0,
+    source: 'none',
+    ruleEnabled: rule?.enabled,
+  }
+  if (!event) return base
+  if (event.status === 'retired') {
+    return {
+      ...base,
+      state: 'stopped',
+      basis: '事件已停用，全端停止采集',
+      effectiveAt: record?.effectiveAt ?? '',
+      actor: record?.actor ?? '',
+      revision: record?.revision ?? 0,
+      source: 'lifecycle',
+    }
+  }
+  if (record) {
+    return {
+      ...base,
+      state: record.state,
+      basis: record.basis,
+      effectiveAt: record.effectiveAt,
+      actor: record.actor,
+      revision: record.revision,
+      source: 'override',
+    }
+  }
+  if (rule) {
+    return rule.enabled
+      ? { ...base, state: 'collecting', basis: '平台规则启用中', source: 'rule' }
+      : { ...base, state: 'stopped', basis: rule.note || '平台规则已停用', source: 'rule' }
+  }
+  return base
+}
+
+export const resolveEventMatrix = (state: GovernanceState, eventId: string): MatrixCell[] =>
+  PLATFORM_ORDER.map((platform) => resolveMatrixCell(state, eventId, platform))
+
+/** 参与矩阵统计与导出的单元格：已配置平台规则或存在显式记录。 */
+export const configuredCells = (cells: MatrixCell[]): MatrixCell[] =>
+  cells.filter((cell) => cell.source !== 'none')
+
+export interface DependencyConsumption {
+  mode: 'full' | 'partial' | 'none'
+  stoppedCells: MatrixCell[]
+  collectingCount: number
+  totalCount: number
+}
+
+/** 下游依赖的实际消费口径：按矩阵逐端核对引用事件的采集状态。 */
+export const dependencyConsumption = (
+  state: GovernanceState,
+  dependency: DownstreamDependency,
+): DependencyConsumption => {
+  const cells = dependency.eventIds.flatMap((eventId) =>
+    configuredCells(resolveEventMatrix(state, eventId)),
+  )
+  const stoppedCells = cells.filter((cell) => cell.state === 'stopped')
+  const collectingCount = cells.filter((cell) => cell.state === 'collecting').length
+  const mode =
+    cells.length === 0 || collectingCount === 0 ? 'none' : stoppedCells.length === 0 ? 'full' : 'partial'
+  return { mode, stoppedCells, collectingCount, totalCount: cells.length }
+}
+
+export interface SynonymCoverage {
+  property: EventProperty
+  coveredBy: Array<{ eventKey: string; propertyName: string }>
+}
+
+/** 停采端的同义属性覆盖：该端仍在采集的其他事件是否提供同义字段。 */
+export const synonymCoverageForCell = (
+  state: GovernanceState,
+  eventId: string,
+  platform: Platform,
+): SynonymCoverage[] => {
+  const event = state.events.find((item) => item.id === eventId)
+  if (!event) return []
+  const donors = state.events.filter(
+    (candidate) =>
+      candidate.id !== eventId &&
+      candidate.status !== 'retired' &&
+      resolveMatrixCell(state, candidate.id, platform).state === 'collecting',
+  )
+  return event.properties
+    .filter((property) => !property.deletedAt)
+    .map((property) => {
+      const aliases = new Set([property.name, ...property.synonyms].map(normalize))
+      const coveredBy = donors.flatMap((donor) =>
+        donor.properties
+          .filter((candidate) => {
+            if (candidate.deletedAt) return false
+            const candidateAliases = new Set(
+              [candidate.name, ...candidate.synonyms].map(normalize),
+            )
+            return [...aliases].some((alias) => candidateAliases.has(alias))
+          })
+          .map((candidate) => ({ eventKey: donor.key, propertyName: candidate.name })),
+      )
+      return { property, coveredBy }
+    })
+}

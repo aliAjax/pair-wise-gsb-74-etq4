@@ -4,8 +4,70 @@ import type {
   EventDefinition,
   EventVersionSnapshot,
   GovernanceState,
+  MatrixStamp,
+  PlatformCollectionRecord,
   ReleaseCandidate,
 } from './domain'
+
+const collectionMatrix: PlatformCollectionRecord[] = [
+  {
+    id: 'col-001',
+    eventId: 'evt-001',
+    platform: 'web',
+    state: 'stopped',
+    basis: 'Web 订单确认页改版，订单提交改由 server 领域事件兜底（REQ-2026-0930）。',
+    effectiveAt: '2026-10-05T00:00:00+08:00',
+    actor: '交易客户端组',
+    revision: 1,
+    updatedAt: '2026-10-05T09:12:00+08:00',
+  },
+  {
+    id: 'col-002',
+    eventId: 'evt-005',
+    platform: 'web',
+    state: 'stopped',
+    basis: '废弃计划 plan-001：与 coupon_apply_result 语义重复。',
+    effectiveAt: '2026-09-20T00:00:00+08:00',
+    actor: '营销产品组',
+    revision: 1,
+    updatedAt: '2026-09-20T16:10:00+08:00',
+  },
+  {
+    id: 'col-003',
+    eventId: 'evt-005',
+    platform: 'ios',
+    state: 'stopped',
+    basis: '废弃计划 plan-001：与 coupon_apply_result 语义重复。',
+    effectiveAt: '2026-09-20T00:00:00+08:00',
+    actor: '营销产品组',
+    revision: 1,
+    updatedAt: '2026-09-20T16:10:00+08:00',
+  },
+  {
+    id: 'col-004',
+    eventId: 'evt-005',
+    platform: 'android',
+    state: 'stopped',
+    basis: '废弃计划 plan-001：与 coupon_apply_result 语义重复。',
+    effectiveAt: '2026-09-20T00:00:00+08:00',
+    actor: '营销产品组',
+    revision: 1,
+    updatedAt: '2026-09-20T16:10:00+08:00',
+  },
+]
+
+/** 发布时的矩阵快照：用于回滚后按矩阵对账。 */
+const matrixSnapshotFor = (eventIds: string[]): MatrixStamp[] =>
+  eventIds.flatMap((eventId) => {
+    const event = events.find((item) => item.id === eventId)
+    if (!event) return []
+    return event.platformRules.map((rule) => ({
+      eventId,
+      platform: rule.platform,
+      state: rule.enabled ? ('collecting' as const) : ('stopped' as const),
+      revision: 0,
+    }))
+  })
 
 const events: EventDefinition[] = [
   {
@@ -91,11 +153,11 @@ const events: EventDefinition[] = [
         id: 'rule-001',
         eventId: 'evt-001',
         platform: 'web',
-        enabled: true,
+        enabled: false,
         trigger: '订单创建接口成功返回后上报',
         owner: 'Web 客户端组',
         requiredPropertyIds: ['prop-001', 'prop-002', 'prop-003', 'prop-005'],
-        note: 'Web 端在支付弹窗打开前上报。',
+        note: 'Web 订单确认页改版后停止客户端上报，由 server 领域事件兜底。',
       },
       {
         id: 'rule-002',
@@ -847,9 +909,11 @@ const releases: ReleaseCandidate[] = [
         id: 'appr-001',
         role: 'data',
         actor: '顾清',
-        status: 'approved',
+        status: 'pending',
         comment: '指标口径影响已评估。',
         createdAt: '2026-09-27T16:00:00+08:00',
+        invalidatedAt: '2026-10-05T09:12:00+08:00',
+        invalidReason: 'Web 端采集状态变更（采集中 → 已停采），需重新审批',
       },
       {
         id: 'appr-002',
@@ -939,6 +1003,7 @@ const releases: ReleaseCandidate[] = [
     ],
     createdAt: '2026-08-25T09:00:00+08:00',
     publishedAt: '2026-08-30T12:00:00+08:00',
+    matrixSnapshot: matrixSnapshotFor(['evt-002', 'evt-004', 'evt-006']),
   },
 ]
 
@@ -1051,5 +1116,8 @@ export const createSeedState = (): GovernanceState => ({
     },
   ],
   audit,
+  collectionMatrix,
+  matrixDrafts: [],
+  matrixRevision: collectionMatrix.length,
   currentVersion: '2026.10.0',
 })

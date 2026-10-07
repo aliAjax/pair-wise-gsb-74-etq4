@@ -3,6 +3,8 @@ export type EventStatus = 'draft' | 'reviewing' | 'approved' | 'published' | 'de
 export type PropertyType = 'string' | 'number' | 'boolean' | 'array' | 'object' | 'enum'
 export type ReleaseStatus = 'draft' | 'reviewing' | 'approved' | 'published' | 'rolled_back'
 export type Severity = 'critical' | 'high' | 'medium' | 'low'
+export type CollectionState = 'collecting' | 'stopped'
+export type MatrixCellState = CollectionState | 'not_configured'
 
 export interface EventProperty {
   id: string
@@ -96,6 +98,8 @@ export interface MigrationConfirmation {
   reviewer: string
   note: string
   confirmedAt?: string
+  invalidatedAt?: string
+  invalidReason?: string
 }
 
 export interface ReleaseApproval {
@@ -105,6 +109,60 @@ export interface ReleaseApproval {
   status: 'pending' | 'approved' | 'rejected'
   comment: string
   createdAt?: string
+  invalidatedAt?: string
+  invalidReason?: string
+}
+
+export interface PlatformCollectionRecord {
+  id: string
+  eventId: string
+  platform: Platform
+  state: CollectionState
+  basis: string
+  effectiveAt: string
+  actor: string
+  revision: number
+  updatedAt: string
+}
+
+export interface MatrixDraft {
+  id: string
+  eventId: string
+  platform: Platform
+  state: CollectionState
+  basis: string
+  effectiveAt: string
+  actor: string
+  baseRevision: number
+  conflictRevision: number
+  createdAt: string
+}
+
+export interface MatrixCell {
+  eventId: string
+  platform: Platform
+  state: MatrixCellState
+  basis: string
+  effectiveAt: string
+  actor: string
+  revision: number
+  source: 'override' | 'rule' | 'lifecycle' | 'none'
+  ruleEnabled?: boolean
+}
+
+export interface MatrixStamp {
+  eventId: string
+  platform: Platform
+  state: CollectionState
+  revision: number
+}
+
+export interface MatrixReconciliation {
+  eventId: string
+  platform: Platform
+  expected: CollectionState
+  actual: MatrixCellState
+  consistent: boolean
 }
 
 export interface ReleaseCandidate {
@@ -117,6 +175,7 @@ export interface ReleaseCandidate {
   differences: ContractDifference[]
   migrationConfirmations: MigrationConfirmation[]
   approvals: ReleaseApproval[]
+  matrixSnapshot?: MatrixStamp[]
   createdAt: string
   publishedAt?: string
 }
@@ -143,6 +202,7 @@ export interface RollbackRecord {
   createdAt: string
   status: 'executed' | 'verified'
   evidence: string
+  matrixChecks?: MatrixReconciliation[]
 }
 
 export interface AuditEvent {
@@ -164,6 +224,9 @@ export interface GovernanceState {
   deprecations: DeprecationPlan[]
   rollbacks: RollbackRecord[]
   audit: AuditEvent[]
+  collectionMatrix: PlatformCollectionRecord[]
+  matrixDrafts: MatrixDraft[]
+  matrixRevision: number
   currentVersion: string
 }
 

@@ -50,6 +50,18 @@ const migrationForm = reactive({
 const selectedApprovalIds = ref<string[]>([])
 const approvalComment = ref('')
 const singleApproval = ref<ReleaseApproval | null>(null)
+const submitting = ref(false)
+
+const invalidatedCount = computed(() => {
+  if (!release.value) return 0
+  return (
+    release.value.migrationConfirmations.filter(
+      (item) => item.status === 'pending' && item.invalidatedAt,
+    ).length +
+    release.value.approvals.filter((item) => item.status === 'pending' && item.invalidatedAt)
+      .length
+  )
+})
 
 const eventName = (eventId: string): string => {
   const event = store.data.events.find((item) => item.id === eventId)
@@ -75,11 +87,14 @@ const openCreate = (): void => {
 }
 
 const createRelease = async (): Promise<void> => {
+  if (submitting.value) return
   if (!createForm.version.trim() || !createForm.title.trim() || createForm.eventIds.length === 0) {
     await MessagePlugin.error('版本号、标题和事件范围不能为空')
     return
   }
+  submitting.value = true
   const created = store.createRelease(createForm.version, createForm.title, createForm.eventIds)
+  submitting.value = false
   releaseId.value = created.id
   createVisible.value = false
   await invalidate()
@@ -98,16 +113,19 @@ const openMigration = (confirmationId: string): void => {
 }
 
 const confirmMigration = async (): Promise<void> => {
+  if (submitting.value) return
   if (!release.value || !migrationForm.reviewer.trim() || !migrationForm.note.trim()) {
     await MessagePlugin.error('确认人和迁移说明不能为空')
     return
   }
+  submitting.value = true
   store.confirmMigration(
     release.value.id,
     migrationForm.confirmationId,
     migrationForm.reviewer,
     migrationForm.note,
   )
+  submitting.value = false
   migrationVisible.value = false
   await invalidate()
   await MessagePlugin.success('下游迁移已确认')
@@ -120,10 +138,12 @@ const openApproval = (approval: ReleaseApproval): void => {
 }
 
 const submitApproval = async (status: ReleaseApproval['status']): Promise<void> => {
+  if (submitting.value) return
   if (!release.value || !singleApproval.value || !approvalComment.value.trim()) {
     await MessagePlugin.error('审批意见不能为空')
     return
   }
+  submitting.value = true
   store.updateApproval(
     release.value.id,
     singleApproval.value.role,
@@ -131,17 +151,19 @@ const submitApproval = async (status: ReleaseApproval['status']): Promise<void> 
     singleApproval.value.actor,
     approvalComment.value,
   )
+  submitting.value = false
   approvalVisible.value = false
   await invalidate()
   await MessagePlugin.success(status === 'approved' ? '审批已通过' : '审批已驳回')
 }
 
 const batchApprove = async (): Promise<void> => {
-  if (!release.value) return
+  if (!release.value || submitting.value) return
   if (selectedApprovalIds.value.length === 0 || !approvalComment.value.trim()) {
     await MessagePlugin.error('请选择审批项并填写批量审批意见')
     return
   }
+  submitting.value = true
   selectedApprovalIds.value.forEach((id) => {
     const approval = release.value?.approvals.find((item) => item.id === id)
     if (approval) {
@@ -154,6 +176,7 @@ const batchApprove = async (): Promise<void> => {
       )
     }
   })
+  submitting.value = false
   selectedApprovalIds.value = []
   approvalComment.value = ''
   await invalidate()
@@ -161,8 +184,11 @@ const batchApprove = async (): Promise<void> => {
 }
 
 const publish = async (): Promise<void> => {
-  if (!release.value) return
-  if (!store.publishRelease(release.value.id)) {
+  if (!release.value || submitting.value) return
+  submitting.value = true
+  const published = store.publishRelease(release.value.id)
+  submitting.value = false
+  if (!published) {
     await MessagePlugin.error('迁移确认或四角色审批尚未完成，当前不可发布')
     return
   }
@@ -356,6 +382,13 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
                 </span>
               </div>
             </div>
+            <div v-if="invalidatedCount" class="gate-row">
+              <CloseCircleIcon class="pending" />
+              <div>
+                <strong>采集矩阵变更</strong>
+                <span>{{ invalidatedCount }} 项确认或审批因平台启停变化已失效，需重新处理</span>
+              </div>
+            </div>
             <div class="readiness">
               <span>综合就绪度</span>
               <strong>{{ readiness }}%</strong>
@@ -382,6 +415,11 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
               </div>
               <StatusTag :value="confirmation.status" />
               <p>{{ confirmation.note || '尚未填写迁移确认说明。' }}</p>
+              <p v-if="confirmation.invalidatedAt && confirmation.status === 'pending'" class="invalid-note">
+                已失效：{{ confirmation.invalidReason }}（{{
+                  new Date(confirmation.invalidatedAt).toLocaleString('zh-CN')
+                }}）
+              </p>
               <t-button
                 variant="outline"
                 size="small"
@@ -408,6 +446,9 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
               <div>
                 <strong>{{ roleLabel(approval.role) }}</strong>
                 <span>{{ approval.actor }} · {{ approval.comment || '待填写意见' }}</span>
+                <span v-if="approval.invalidatedAt && approval.status === 'pending'" class="invalid-note">
+                  已失效：{{ approval.invalidReason }}
+                </span>
               </div>
               <StatusTag :value="approval.status" />
               <t-button variant="text" size="small" @click.prevent="openApproval(approval)">
@@ -685,6 +726,11 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
 
 .approval-row span {
   color: #717c8e;
+  font-size: 11px;
+}
+
+.invalid-note {
+  color: #b42318 !important;
   font-size: 11px;
 }
 

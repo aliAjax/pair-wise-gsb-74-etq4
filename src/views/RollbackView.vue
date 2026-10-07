@@ -9,6 +9,8 @@ import {
 import { MessagePlugin } from 'tdesign-vue-next'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import type { MatrixReconciliation, RollbackRecord } from '@/models/domain'
+import { PLATFORM_LABELS } from '@/services/selectors'
 import { useGovernanceStore } from '@/stores/governance'
 
 const store = useGovernanceStore()
@@ -32,6 +34,15 @@ const rollbackRecords = computed(() =>
   })),
 )
 
+const eventKey = (eventId: string): string =>
+  store.data.events.find((event) => event.id === eventId)?.key ?? eventId
+
+const mismatches = (record: RollbackRecord): MatrixReconciliation[] =>
+  (record.matrixChecks ?? []).filter((check) => !check.consistent)
+
+const stateLabel = (state: string): string =>
+  ({ collecting: '采集中', stopped: '已停采', not_configured: '未接入' })[state] ?? state
+
 const openRollback = (): void => {
   form.releaseId = store.data.releases.find((release) => release.status === 'published')?.id ?? ''
   form.reason = ''
@@ -47,7 +58,12 @@ const execute = async (): Promise<void> => {
   }
   store.executeRollback(form.releaseId, form.reason, form.scope, form.evidence)
   rollbackVisible.value = false
-  await MessagePlugin.success('回滚指令已记录，请继续执行结果验证')
+  await MessagePlugin.success('回滚指令已记录，已按采集矩阵完成对账')
+}
+
+const reconcile = async (rollbackId: string): Promise<void> => {
+  store.reconcileRollback(rollbackId)
+  await MessagePlugin.success('已按当前采集矩阵重新对账')
 }
 
 const openVerify = (rollbackId: string): void => {
@@ -144,6 +160,27 @@ const verify = async (): Promise<void> => {
                 <dd>{{ record.evidence }}</dd>
               </div>
             </dl>
+            <div v-if="record.matrixChecks?.length" class="matrix-checks">
+              <div class="checks-head">
+                <strong>矩阵对账</strong>
+                <span>
+                  {{ record.matrixChecks.filter((check) => check.consistent).length }}/{{
+                    record.matrixChecks.length
+                  }}
+                  端与发布时一致
+                </span>
+                <t-button variant="text" size="small" @click="reconcile(record.id)">
+                  按当前矩阵重新对账
+                </t-button>
+              </div>
+              <ul v-if="mismatches(record).length" class="mismatch-list">
+                <li v-for="check in mismatches(record)" :key="`${check.eventId}-${check.platform}`">
+                  {{ eventKey(check.eventId) }} / {{ PLATFORM_LABELS[check.platform] }}：发布时
+                  {{ stateLabel(check.expected) }} → 当前 {{ stateLabel(check.actual) }}
+                </li>
+              </ul>
+              <span v-else class="checks-ok">各端采集状态与发布时一致。</span>
+            </div>
             <t-button
               v-if="record.status === 'executed'"
               theme="primary"
@@ -323,6 +360,44 @@ const verify = async (): Promise<void> => {
 
 .rollback-main :deep(.t-button) {
   justify-self: start;
+}
+
+.matrix-checks {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e3e7ec;
+  border-radius: 5px;
+  background: #fafbfc;
+}
+
+.checks-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checks-head strong {
+  font-size: 12px;
+}
+
+.checks-head span {
+  color: #6d788b;
+  font-size: 11px;
+}
+
+.mismatch-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+  color: #b42318;
+  font-size: 11px;
+}
+
+.checks-ok {
+  color: #0f8a62;
+  font-size: 11px;
 }
 
 .dialog-footer {

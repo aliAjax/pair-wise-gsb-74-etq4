@@ -19,6 +19,11 @@ const router = createRouter({
           component: () => import('@/views/EventTreeView.vue'),
         },
         {
+          path: 'matrix',
+          name: 'matrix',
+          component: () => import('@/views/CollectionMatrixView.vue'),
+        },
+        {
           path: 'lineage',
           name: 'lineage',
           component: () => import('@/views/PropertyLineageView.vue'),

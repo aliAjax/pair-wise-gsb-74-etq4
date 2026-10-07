@@ -11,6 +11,7 @@ import {
   RefreshIcon,
   RollbackIcon,
   SettingIcon,
+  ViewModuleIcon,
 } from 'tdesign-icons-vue-next'
 import { DialogPlugin } from 'tdesign-vue-next'
 import { useGovernanceStore } from '@/stores/governance'
@@ -21,6 +22,7 @@ const store = useGovernanceStore()
 const navigation = [
   { label: '治理工作台', icon: ChartIcon, to: '/' },
   { label: '事件契约树', icon: GitBranchIcon, to: '/events' },
+  { label: '采集矩阵', icon: ViewModuleIcon, to: '/matrix' },
   { label: '属性血缘', icon: LinkIcon, to: '/lineage' },
   { label: '契约校验', icon: FileSearchIcon, to: '/validation' },
   { label: '发布评审', icon: DataSearchIcon, to: '/releases' },
@@ -93,6 +95,14 @@ const reset = (): void => {
         </div>
       </header>
       <section class="content-shell">
+        <t-alert
+          v-if="store.persistError"
+          class="persist-alert"
+          theme="error"
+          :message="store.persistError"
+          close
+          @close="store.persistError = ''"
+        />
         <RouterView />
       </section>
     </main>
@@ -250,5 +260,9 @@ const reset = (): void => {
 .content-shell {
   max-width: 1560px;
   padding: 24px;
+}
+
+.persist-alert {
+  margin-bottom: 16px;
 }
 </style>

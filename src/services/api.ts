@@ -6,7 +6,12 @@ import type {
   ValidationIssue,
 } from '@/models/domain'
 import { loadState } from '@/services/repository'
-import { validateGovernance } from '@/services/selectors'
+import {
+  configuredCells,
+  dependencyConsumption,
+  resolveEventMatrix,
+  validateGovernance,
+} from '@/services/selectors'
 
 export interface EventListFilters {
   keyword?: string
@@ -23,6 +28,9 @@ export interface DashboardPayload {
   pendingMigrations: number
   validationIssueCount: number
   criticalIssueCount: number
+  stoppedPlatformCount: number
+  partialDependencyCount: number
+  matrixDraftCount: number
   currentRelease: ReleaseCandidate | null
 }
 
@@ -39,6 +47,9 @@ const localAdapter: AxiosAdapter = async (config) => {
     const issues = validateGovernance(state)
     const currentRelease =
       state.releases.find((release) => release.status === 'reviewing') ?? state.releases[0] ?? null
+    const matrixCells = state.events.flatMap((event) =>
+      configuredCells(resolveEventMatrix(state, event.id)),
+    )
     const data: DashboardPayload = {
       eventCount: state.events.length,
       activeEventCount: state.events.filter((event) =>
@@ -52,6 +63,11 @@ const localAdapter: AxiosAdapter = async (config) => {
         currentRelease?.migrationConfirmations.filter((item) => item.status === 'pending').length ?? 0,
       validationIssueCount: issues.length,
       criticalIssueCount: issues.filter((issue) => issue.severity === 'critical').length,
+      stoppedPlatformCount: matrixCells.filter((cell) => cell.state === 'stopped').length,
+      partialDependencyCount: state.dependencies.filter(
+        (dependency) => dependencyConsumption(state, dependency).mode === 'partial',
+      ).length,
+      matrixDraftCount: state.matrixDrafts.length,
       currentRelease,
     }
     return {
